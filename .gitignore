@@ -1,0 +1,8 @@
+# Local Claude Code settings
+.claude/settings.local.json
+
+# Editor and OS clutter
+.vscode/
+*.swp
+Thumbs.db
+desktop.ini
