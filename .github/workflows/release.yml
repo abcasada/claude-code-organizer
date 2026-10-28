@@ -1,0 +1,93 @@
+name: Release
+
+on:
+  push:
+    tags: ["v*"]
+
+permissions:
+  contents: read
+
+jobs:
+  check-version:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v7
+      - name: Tag must match __version__ and pyproject version
+        shell: python
+        run: |
+          import os, re, sys, tomllib
+          tag = os.environ["GITHUB_REF_NAME"]
+          init = open("src/claude_code_organizer/__init__.py", encoding="utf-8").read()
+          version = re.search(r'^__version__\s*=\s*["\']([^"\']+)["\']', init, re.M).group(1)
+          with open("pyproject.toml", "rb") as f:
+              pyproject = tomllib.load(f)["project"]["version"]
+          if tag != f"v{version}" or pyproject != version:
+              print(f"::error::tag {tag}, __version__ {version}, pyproject {pyproject} disagree")
+              sys.exit(1)
+
+  exe:
+    needs: check-version
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@v7
+      - uses: actions/setup-python@v7
+        with:
+          python-version: "3.13"
+      - run: pip install -e . pyinstaller
+      - run: python packaging/windows/build_exe.py
+
+      # Windowed exe has no console, so wait on the process for its exit code.
+      - name: Smoke test
+        env:
+          QT_QPA_PLATFORM: offscreen
+        run: |
+          $p = Start-Process dist/ClaudeCodeOrganizer.exe -ArgumentList '--smoke-test' -Wait -PassThru
+          if ($p.ExitCode -ne 0) { throw "smoke test exited with $($p.ExitCode)" }
+
+      - uses: actions/upload-artifact@v7
+        with:
+          name: exe
+          path: dist/ClaudeCodeOrganizer.exe
+          if-no-files-found: error
+
+  deb:
+    needs: check-version
+    runs-on: ubuntu-latest
+    container: ubuntu:26.04
+    env:
+      DEBIAN_FRONTEND: noninteractive
+    steps:
+      - uses: actions/checkout@v7
+      - name: Install build tools
+        run: |
+          apt-get update
+          apt-get install -y --no-install-recommends python3
+      - run: python3 packaging/linux/build_deb.py
+      - name: Install and smoke test
+        run: |
+          apt-get install -y --no-install-recommends ./dist/*.deb
+          QT_QPA_PLATFORM=offscreen claude-code-organizer --smoke-test
+      - uses: actions/upload-artifact@v7
+        with:
+          name: deb
+          path: dist/*.deb
+          if-no-files-found: error
+
+  release:
+    needs: [exe, deb]
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/download-artifact@v8
+        with:
+          path: dist
+          merge-multiple: true
+      - name: Create GitHub release
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: >
+          gh release create "$GITHUB_REF_NAME" dist/*
+          --repo "$GITHUB_REPOSITORY"
+          --title "Claude Code Organizer ${GITHUB_REF_NAME#v}"
+          --generate-notes
