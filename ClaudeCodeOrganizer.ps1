@@ -20,7 +20,21 @@ Add-Type -AssemblyName System.Windows.Forms, System.Drawing
 Add-Type -Namespace ClaudeCodeOrganizer -Name Native -MemberDefinition @'
 [System.Runtime.InteropServices.DllImport("user32.dll")]
 public static extern bool SetProcessDPIAware();
+[System.Runtime.InteropServices.DllImport("user32.dll")]
+public static extern bool AllowSetForegroundWindow(int processId);
 '@
+
+# Single instance: if the organizer is already running, ask it to come to the front and exit.
+# Local\ names are per logon session, so each Windows user gets their own instance.
+$createdNew = $false
+$script:InstanceMutex = New-Object System.Threading.Mutex($true, 'Local\ClaudeCodeOrganizer', [ref]$createdNew)
+$script:ActivateEvent = New-Object System.Threading.EventWaitHandle($false, 'AutoReset', 'Local\ClaudeCodeOrganizer.Activate')
+if (-not $createdNew) {
+    # We were just launched by the user, so we may hand our right to take the foreground to the running copy.
+    [void][ClaudeCodeOrganizer.Native]::AllowSetForegroundWindow(-1)  # ASFW_ANY
+    [void]$script:ActivateEvent.Set()
+    return
+}
 
 $script:AppName = 'Claude Code Organizer'
 $script:RefreshIntervalMs = 5000
@@ -89,8 +103,16 @@ function Set-RowValue {
     if (-not $Row[$Column].Equals($Value)) { $Row[$Column] = $Value }
 }
 
+function Clear-GridSelection {
+    $grid.CurrentCell = $null
+    $grid.ClearSelection()
+}
+
 function Update-Sessions {
-    $seen = New-Object 'System.Collections.Generic.HashSet[string]' ([StringComparer]::OrdinalIgnoreCase)
+    # Adding or re-sorting rows can make the grid pick a current row on its own; don't let a refresh
+    # select something when nothing was selected.
+    $hadSelection = $grid.SelectedRows.Count -gt 0
+    $seen =New-Object 'System.Collections.Generic.HashSet[string]' ([StringComparer]::OrdinalIgnoreCase)
     foreach ($file in @(Get-SessionFiles)) {
         [void]$seen.Add($file.FullName)
         $record = $script:Records[$file.FullName]
@@ -129,10 +151,12 @@ function Update-Sessions {
         Set-RowValue $row 'HasContent' (Test-SessionHasContent $record)
         if ($isNew) { $table.Rows.Add($row) }
     }
+    if (-not $hadSelection) { Clear-GridSelection }
     Update-StatusText
 }
 
 function Update-Filter {
+    $hadSelection = $grid.SelectedRows.Count -gt 0
     $clauses = @()
     if (-not $emptyCheck.Checked) { $clauses += 'HasContent = true' }
 
@@ -143,6 +167,7 @@ function Update-Filter {
         $clauses += "(Title LIKE '%$escaped%' OR Project LIKE '%$escaped%' OR SessionId LIKE '%$escaped%')"
     }
     $view.RowFilter = $clauses -join ' AND '
+    if (-not $hadSelection) { Clear-GridSelection }
     Update-StatusText
 }
 
@@ -340,6 +365,10 @@ $form.Controls.Add($statusStrip)
 $timer = New-Object System.Windows.Forms.Timer
 $timer.Interval = $script:RefreshIntervalMs
 
+# Polls for "come to the front" requests from copies that were started while we're running.
+$activateTimer = New-Object System.Windows.Forms.Timer
+$activateTimer.Interval = 250
+
 #endregion
 
 #region Events
@@ -371,6 +400,16 @@ $grid.add_CellMouseDown({
         $grid.CurrentCell = $grid.Rows[$e.RowIndex].Cells[[Math]::Max($e.ColumnIndex, 1)]
     }
 })
+
+# Clicking anywhere that isn't a row deselects. The grid makes its first row current when it
+# gains focus, and this handler runs after that, so a click on its empty area ends up with nothing selected.
+$grid.add_MouseDown({
+    param($sender, $e)
+    if ($grid.HitTest($e.X, $e.Y).Type -ne 'Cell') { Clear-GridSelection }
+})
+foreach ($control in @($form, $toolbar, $searchLabel, $statusStrip)) {
+    $control.add_MouseDown({ Clear-GridSelection })
+}
 
 $grid.add_CellFormatting({
     param($sender, $e)
@@ -438,6 +477,12 @@ $searchBox.add_TextChanged({ Invoke-Safely { Update-Filter } })
 $emptyCheck.add_CheckedChanged({ Invoke-Safely { Update-Filter } })
 $refreshButton.add_Click({ Invoke-Safely { Update-Sessions } })
 $timer.add_Tick({ Invoke-Safely { Update-Sessions } })
+$activateTimer.add_Tick({
+    if ($script:ActivateEvent.WaitOne(0)) {
+        if ($form.WindowState -eq 'Minimized') { $form.WindowState = 'Normal' }
+        $form.Activate()
+    }
+})
 
 $form.add_Shown({
     $form.Cursor = [System.Windows.Forms.Cursors]::WaitCursor
@@ -446,18 +491,28 @@ $form.add_Shown({
         Update-Filter
     }
     $form.Cursor = [System.Windows.Forms.Cursors]::Default
-    if ($grid.Rows.Count -gt 0) { $grid.CurrentCell = $grid.Rows[0].Cells['Title'] }
-    $grid.Focus()
+    # Focusing the grid would make its first row current, so start in the search box with nothing selected.
+    $searchBox.Focus()
+    Clear-GridSelection
     $timer.Start()
+    $activateTimer.Start()
 })
 
 $form.add_FormClosing({
     $timer.Stop()
+    $activateTimer.Stop()
     Save-Settings
 })
 
 #endregion
 
-[void]$form.ShowDialog()
-$timer.Dispose()
-$form.Dispose()
+try {
+    [void]$form.ShowDialog()
+} finally {
+    $timer.Dispose()
+    $activateTimer.Dispose()
+    $form.Dispose()
+    $script:ActivateEvent.Dispose()
+    $script:InstanceMutex.ReleaseMutex()
+    $script:InstanceMutex.Dispose()
+}

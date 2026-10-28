@@ -7,6 +7,7 @@ Each session has a **Resume** button. It opens a new PowerShell tab in your most
 - Sessions are listed by title, with the most recently active first. The title is your `/rename` title, Claude's auto-generated title, or else your first prompt.
 - Shows which sessions are open right now in another Claude Code window, and whether they're working or idle.
 - Search box filters by title, folder or session ID.
+- Only one copy runs at a time. Opening it again brings the existing window to the front.
 - The list refreshes itself every few seconds. It only reads the new part of each transcript, so it stays fast even with very large sessions.
 - No dependencies: plain PowerShell and WinForms, both built into Windows.
 
