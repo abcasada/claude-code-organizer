@@ -1,80 +1,96 @@
 # Claude Code Organizer
 
-A small Windows app that lists every [Claude Code](https://claude.com/claude-code) session on your computer and reopens any of them with one click.
+A small desktop app for Windows and Linux that lists every [Claude Code](https://claude.com/claude-code) session on your computer, so you can reopen, rename, archive or delete one with a click.
 
-Each session has a **Resume** button. It opens a new PowerShell tab in your most recently used Windows Terminal window (or a new window if none is open), changes to the folder the session was started in, and runs `claude --resume <session-id>`.
+**Resume** opens the session in a new terminal tab, in the folder it was started in, running `claude --resume <session-id>`. On Windows that's a tab in Windows Terminal; on Linux, Konsole, GNOME Terminal or Ptyxis, or another terminal if those aren't installed.
 
-- Sessions are listed by title, with the most recently active first. The title is your `/rename` title, Claude's auto-generated title, or else your first prompt.
-- Shows which sessions are open right now in another Claude Code window, and whether they're working or idle.
-- Search box filters by title, folder or session ID.
-- Only one copy runs at a time. Opening it again brings the existing window to the front.
-- The list refreshes itself every few seconds. It only reads the new part of each transcript, so it stays fast even with very large sessions.
-- No dependencies: plain PowerShell and WinForms, both built into Windows.
-
-## Requirements
-
-- Windows 10 or 11
-- [Claude Code](https://docs.claude.com/en/docs/claude-code/setup) installed, with `claude` on your PATH
-- Windows Terminal (optional, built into Windows 11). Without it, sessions open in a new PowerShell window instead of a tab.
+- Sessions show their `/rename` title, Claude's automatic title, or else your first prompt. The most recently active session is listed first.
+- Shows which sessions are open right now, and whether they're working, idle or waiting for you.
+- Search by title, folder or session ID. Optionally group the list by folder.
+- **Rename** works the same way as Claude Code's `/rename`, so the new name also shows in `claude --resume`.
+- **Archive** moves a session out of Claude Code's folder. Claude Code automatically deletes sessions older than 30 days ([`cleanupPeriodDays`](https://docs.claude.com/en/docs/claude-code/settings)), so archiving keeps the ones you want. Resuming an archived session restores it first.
+- **Delete** moves a session to the Recycle Bin or Trash, so you can undo it.
+- Light, dark, or follow-the-system theme.
 
 ## Install
 
-1. Get the code, either:
-   - `git clone https://github.com/abcasada/claude-code-organizer.git`, or
-   - **Code > Download ZIP** on GitHub, then extract it somewhere permanent (for example `Documents\claude-code-organizer`).
-2. In that folder, run:
+### Windows 10/11
 
-   ```powershell
-   powershell -ExecutionPolicy Bypass -File .\Install.ps1
-   ```
+1. Download `ClaudeCodeOrganizer.exe` from the [latest release](https://github.com/abcasada/claude-code-organizer/releases/latest) and put it somewhere permanent, for example `Documents\Apps`.
+2. Run it. Windows may warn that the app is from an unknown publisher, because it isn't code-signed: choose **More info > Run anyway**.
+3. Optional: **File > Add to Start Menu**.
 
-   Add `-Desktop` to also get a desktop shortcut.
-3. Open **Claude Code Organizer** from the Start menu.
+### Ubuntu / Debian (KDE, GNOME and others)
 
-The installer only creates shortcuts that point at this folder. If you move the folder, run it again.
+Download the `.deb` from the [latest release](https://github.com/abcasada/claude-code-organizer/releases/latest), then:
 
-To run it without installing:
-
-```powershell
-powershell -ExecutionPolicy Bypass -File .\ClaudeCodeOrganizer.ps1
+```bash
+sudo apt install ./claude-code-organizer_*_all.deb
 ```
+
+It uses your distribution's Qt for Python packages (Ubuntu 26.04 or newer). Open **Claude Code Organizer** from your app menu.
+
+### From source (any platform with Python 3.10+)
+
+```bash
+pip install git+https://github.com/abcasada/claude-code-organizer.git
+claude-code-organizer
+```
+
+You also need [Claude Code](https://docs.claude.com/en/docs/claude-code/setup) itself, with `claude` on your PATH.
 
 ## Using it
 
 | Action | How |
 | --- | --- |
-| Resume a session | **Resume** button, double-click the row, or select it and press **Enter** |
-| Search | Type in the search box (**Ctrl+F** jumps there, **Esc** clears it) |
-| Refresh now | **Refresh** button or **F5** |
-| Copy the resume command, copy the session ID, or open the folder in Explorer | Right-click a session |
+| Resume | **Resume** button, double-click, or **Enter** |
+| Rename | **F2**, or right-click > Rename |
+| Archive or restore | **Ctrl+E**, or right-click |
+| Delete (to the Recycle Bin or Trash) | **Delete**, or right-click |
+| Search | Type in the search box (**Ctrl+F**) |
+| Group by folder | **Ctrl+G** |
+| Show archived sessions | View menu, or the toolbar button |
+| Copy the resume command or session ID, open the folder | Right-click |
 
-**Open as a tab in Windows Terminal**: untick this to open each session in its own PowerShell window instead.
-**Show empty sessions**: also list sessions that were started but never got a prompt (for example, ones where you only ran `/model`).
+You can select several sessions to archive, restore or delete them together. Renaming, archiving and deleting are refused while a session is open in Claude Code; close it first (or use `/rename` inside it).
 
-Your choices and the window size are saved in `%APPDATA%\ClaudeCodeOrganizer\settings.json`.
+**Settings** (File menu) has the theme, whether sessions open as tabs in an existing terminal window, and on Linux which terminal to use.
+
+## Where things are stored
+
+| What | Windows | Linux |
+| --- | --- | --- |
+| Claude Code's sessions (read, and changed only when you rename, archive or delete) | `%USERPROFILE%\.claude` | `~/.claude` |
+| Archived sessions | `%APPDATA%\ClaudeCodeOrganizer\archive` | `~/.local/share/claude-code-organizer/archive` |
+| Settings | `%APPDATA%\ClaudeCodeOrganizer\settings.json` | `~/.config/claude-code-organizer/settings.json` |
+
+If you set `CLAUDE_CONFIG_DIR`, the organizer uses that folder instead of `.claude`.
+
+A session's files are its transcript (`projects/<folder>/<id>.jsonl`), its folder of subagent transcripts and tool output, and its `file-history` and `session-env` entries. Archive and delete act on exactly those. They never touch the project's `memory` folder or your prompt history.
 
 ## How it works
 
-Claude Code saves each conversation as a JSON Lines transcript under `%USERPROFILE%\.claude\projects\<project-folder>\<session-id>.jsonl`. If you set `CLAUDE_CONFIG_DIR`, it uses that folder instead, and so does this app. The organizer reads those transcripts without modifying them, to find each session's title and working directory.
+Claude Code saves each conversation as a JSON Lines transcript. The organizer reads only the parts it needs (titles, the working folder, the first prompt) and only what's new since the last refresh, so it stays fast with very large sessions. Open sessions are detected from the status files Claude Code keeps in `.claude/sessions`.
 
-`claude --resume <id>` only finds a session from the folder it belongs to, so the organizer starts the new tab in that folder. When a session has been continued from more than one folder, each copy is listed with its own folder.
-
-Open sessions are detected from the small status files Claude Code keeps in `.claude\sessions\`.
-
-## Uninstall
-
-```powershell
-powershell -ExecutionPolicy Bypass -File .\Install.ps1 -Uninstall
-```
-
-This removes the shortcuts and saved settings. Then delete the folder. Your Claude Code sessions are never touched.
+`claude --resume <id>` only finds a session from the folder it belongs to, so the organizer starts the terminal there. A resumed session gets your normal login environment, even if the organizer itself was started from inside Claude Code.
 
 ## Troubleshooting
 
-- **"The session's folder isn't available"**: the session was started in a folder that no longer exists or is on a drive that isn't connected (for example a network or Remote Desktop drive). Reconnect it and try again.
-- **The tab opens but says `claude` is not recognized**: Claude Code isn't on your PATH. Check that `claude --version` works in a new PowerShell window.
-- **Sessions open in a new Terminal window instead of a tab**: no Terminal window was open. The organizer always uses your most recently used window.
+- **"Folder missing"**: the session was started in a folder that has since been moved or deleted, or is on a drive that isn't connected. Resume is disabled until the folder is back.
+- **The tab opens but `claude` isn't found**: make sure `claude --version` works in a new terminal. On Linux the session starts in a login shell, so PATH changes in `~/.profile` or `~/.bashrc` apply.
+- **On Linux nothing opens**: choose a terminal explicitly in **File > Settings**.
+
+## Development
+
+```bash
+python -m venv .venv
+.venv/bin/pip install -e .[dev]      # Windows: .venv\Scripts\pip
+.venv/bin/pytest
+.venv/bin/python -m claude_code_organizer
+```
+
+Packaging and releases are described in [packaging/README.md](packaging/README.md).
 
 ## License
 
-[MIT](LICENSE)
+[MIT](LICENSE). Not affiliated with Anthropic.

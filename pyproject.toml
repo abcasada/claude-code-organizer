@@ -1,0 +1,33 @@
+[build-system]
+requires = ["setuptools>=69"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "claude-code-organizer"
+version = "0.2.0"
+description = "List, resume, rename, archive and delete your Claude Code sessions."
+readme = "README.md"
+license = "MIT"
+authors = [{ name = "Adam Casada" }]
+requires-python = ">=3.10"
+# The Linux .deb uses the distribution's PySide6 instead; keep to APIs available in 6.5+.
+dependencies = ["PySide6-Essentials>=6.5"]
+
+[project.optional-dependencies]
+dev = ["pytest>=8"]
+
+[project.urls]
+Homepage = "https://github.com/abcasada/claude-code-organizer"
+
+[project.gui-scripts]
+claude-code-organizer = "claude_code_organizer.app:main"
+
+[tool.setuptools.packages.find]
+where = ["src"]
+
+[tool.setuptools.package-data]
+claude_code_organizer = ["resources/*"]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+pythonpath = ["src"]
