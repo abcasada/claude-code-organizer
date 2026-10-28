@@ -37,7 +37,7 @@ if (-not $createdNew) {
 }
 
 $script:AppName = 'Claude Code Organizer'
-$script:RefreshIntervalMs = 5000
+$script:RefreshIntervalMs = 2000
 $script:SettingsPath = Join-Path $env:APPDATA 'ClaudeCodeOrganizer\settings.json'
 $script:WindowsTerminal = Find-WindowsTerminal
 $script:Records = @{}      # transcript path -> session record
@@ -204,6 +204,8 @@ function Invoke-Resume {
         Show-Message "The session's folder isn't available:`n`n$($Record.Cwd)`n`nClaude Code resumes a session from the folder it was started in. Reconnect the drive or restore the folder and try again."
         return
     }
+    # Re-check now rather than trusting the last refresh: the session may have been closed a moment ago.
+    Update-Sessions
     if ($script:OpenSessions.ContainsKey((Get-OpenSessionKey $Record.SessionId $Record.Cwd))) {
         $answer = [System.Windows.Forms.MessageBox]::Show($form,
             "This session is already open in another Claude Code window.`n`nRunning it in two places at once makes the conversations diverge. Open another copy anyway?",
