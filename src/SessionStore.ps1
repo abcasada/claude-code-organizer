@@ -14,10 +14,64 @@ if (-not ('ClaudeCodeOrganizer.TranscriptScanner' -as [type])) {
 using System;
 using System.Collections.Generic;
 using System.IO;
+using System.Runtime.InteropServices;
 using System.Text;
 
 namespace ClaudeCodeOrganizer
 {
+    public static class LoginEnvironment
+    {
+        [DllImport("advapi32.dll", SetLastError = true)]
+        private static extern bool OpenProcessToken(IntPtr process, uint access, out IntPtr token);
+        [DllImport("kernel32.dll")]
+        private static extern IntPtr GetCurrentProcess();
+        [DllImport("kernel32.dll")]
+        private static extern bool CloseHandle(IntPtr handle);
+        [DllImport("userenv.dll", SetLastError = true)]
+        private static extern bool CreateEnvironmentBlock(out IntPtr block, IntPtr token, bool inherit);
+        [DllImport("userenv.dll")]
+        private static extern bool DestroyEnvironmentBlock(IntPtr block);
+
+        private const uint TokenQuery = 0x0008;
+        private const uint TokenDuplicate = 0x0002;
+
+        // Returns the environment a freshly started program gets from Windows (the system and user
+        // variables from the registry), ignoring anything set on this process. Null on failure.
+        public static Dictionary<string, string> Get()
+        {
+            IntPtr token;
+            if (!OpenProcessToken(GetCurrentProcess(), TokenQuery | TokenDuplicate, out token)) return null;
+            try
+            {
+                IntPtr block;
+                if (!CreateEnvironmentBlock(out block, token, false)) return null;
+                try
+                {
+                    // The block is a sequence of "NAME=value\0" strings ending with an empty string.
+                    var result = new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase);
+                    IntPtr entryPtr = block;
+                    while (true)
+                    {
+                        string entry = Marshal.PtrToStringUni(entryPtr);
+                        if (string.IsNullOrEmpty(entry)) break;
+                        int equals = entry.IndexOf('=', 1);  // hidden per-drive entries start with '='
+                        if (equals > 0) result[entry.Substring(0, equals)] = entry.Substring(equals + 1);
+                        entryPtr = new IntPtr(entryPtr.ToInt64() + (entry.Length + 1) * 2);
+                    }
+                    return result;
+                }
+                finally
+                {
+                    DestroyEnvironmentBlock(block);
+                }
+            }
+            finally
+            {
+                CloseHandle(token);
+            }
+        }
+    }
+
     public class ScanResult
     {
         // Title lines, plus the first few user-message lines (as raw JSON).
@@ -418,5 +472,21 @@ function Get-ResumeLaunchSpec {
 function Start-ResumeSession {
     param([Parameter(Mandatory)]$Spec)
 
-    Start-Process -FilePath $Spec.FilePath -ArgumentList $Spec.Arguments -WorkingDirectory $Spec.WorkingDirectory
+    $startInfo = New-Object System.Diagnostics.ProcessStartInfo
+    $startInfo.FileName = $Spec.FilePath
+    $startInfo.Arguments = $Spec.Arguments
+    $startInfo.WorkingDirectory = $Spec.WorkingDirectory
+    $startInfo.UseShellExecute = $false
+
+    # Give the session the user's normal login environment rather than ours. If the organizer was
+    # itself started from inside Claude Code it inherits variables such as CLAUDE_CODE_CHILD_SESSION
+    # (turns off transcript saving) and NO_COLOR, and Windows Terminal passes the caller's
+    # environment on to the new tab.
+    $environment = [ClaudeCodeOrganizer.LoginEnvironment]::Get()
+    if ($environment) {
+        $startInfo.EnvironmentVariables.Clear()
+        foreach ($pair in $environment.GetEnumerator()) { $startInfo.EnvironmentVariables[$pair.Key] = $pair.Value }
+    }
+
+    [void][System.Diagnostics.Process]::Start($startInfo)
 }
