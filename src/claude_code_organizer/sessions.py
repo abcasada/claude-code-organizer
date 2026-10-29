@@ -17,6 +17,7 @@ _AGENT_NAME = b'{"type":"agent-name"'
 _AI_TITLE = b'{"type":"ai-title"'
 _MESSAGE = b'{"parentUuid"'
 _CWD_KEY = b'"cwd":"'
+_ENTRYPOINT_KEY = b'"entrypoint":"'
 _ENTRYPOINT_RE = re.compile(rb'"entrypoint":"([^"\\]*)"')
 # User lines bigger than this are pasted blobs or tool output, never worth parsing for a title.
 _MAX_PROMPT_LINE = 256 * 1024
@@ -53,7 +54,8 @@ class Session:
     ai_title: str | None = None
     agent_name: str | None = None
     custom_title: str | None = None
-    entrypoint: str | None = None
+    entrypoint: str | None = None    # what started it
+    entrypoints: set[str] = field(default_factory=set)  # everything it has been used from
 
     def __post_init__(self) -> None:
         self.session_id = self.path.stem
@@ -75,6 +77,12 @@ class Session:
     def is_scripted(self) -> bool:
         # `claude -p` and Agent SDK runs; not something you'd resume by hand.
         return bool(self.entrypoint and self.entrypoint.startswith("sdk"))
+
+    @property
+    def is_desktop_app(self) -> bool:
+        # Only ever used in the Claude desktop app, which lists its own sessions. Once resumed from
+        # the command line it's a CLI session too.
+        return bool(self.entrypoints) and all(e.startswith("claude-desktop") for e in self.entrypoints)
 
     @property
     def last_active(self) -> float:
@@ -153,10 +161,14 @@ class Session:
         if cwd and cwd not in self.cwds and not (sys.platform == "win32" and cwd.startswith("/")):
             self.cwds.append(cwd)
 
-        if self.entrypoint is None:
-            match = _ENTRYPOINT_RE.search(line)
+        # Near the end of the line, after the message itself; search from there.
+        start = line.rfind(_ENTRYPOINT_KEY)
+        if start >= 0:
+            match = _ENTRYPOINT_RE.match(line, start)
             if match:
-                self.entrypoint = match.group(1).decode("utf-8", "replace")
+                entrypoint = match.group(1).decode("utf-8", "replace")
+                self.entrypoint = self.entrypoint or entrypoint
+                self.entrypoints.add(entrypoint)
 
         if self.first_prompt is not None or len(line) > _MAX_PROMPT_LINE:
             return

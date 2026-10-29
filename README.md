@@ -6,7 +6,7 @@ A small desktop app for Windows and Linux that lists every [Claude Code](https:/
 
 - Sessions show their `/rename` title, Claude's automatic title, or else your first prompt. The most recently active session is listed first.
 - Shows which sessions are open right now, and whether they're working, idle or waiting for you.
-- Search by title, folder or session ID. Optionally group the list by folder.
+- Search by title, folder, session ID or group. Group the list by folder, or put sessions into groups of your own.
 - **Rename** works the same way as Claude Code's `/rename`, so the new name also shows in `claude --resume`.
 - **Archive** moves a session out of Claude Code's folder. Claude Code automatically deletes sessions older than 30 days ([`cleanupPeriodDays`](https://docs.claude.com/en/docs/claude-code/settings)), so archiving keeps the ones you want. Resuming an archived session restores it first.
 - **Delete** moves a session to the Recycle Bin or Trash, so you can undo it.
@@ -49,12 +49,18 @@ You also need [Claude Code](https://docs.claude.com/en/docs/claude-code/setup) i
 | Rename | **F2**, or right-click > Rename |
 | Archive or restore | **Ctrl+E**, or right-click |
 | Delete (to the Recycle Bin or Trash) | **Delete**, or right-click |
+| Put in a group | Right-click > Move to Group |
+| Rename or delete a group | Right-click the group (when grouped by My Groups) |
+| Group by folder, by your groups, or not at all | **Group by** toolbar button, or **Ctrl+G** to switch |
 | Search | Type in the search box (**Ctrl+F**) |
-| Group by folder | **Ctrl+G** |
 | Show archived sessions | View menu, or the toolbar button |
 | Copy the resume command or session ID, open the folder | Right-click |
 
-You can select several sessions to archive, restore or delete them together. Renaming, archiving and deleting are refused while a session is open in Claude Code; close it first (or use `/rename` inside it).
+You can select several sessions to group, archive, restore or delete them together. Renaming, archiving and deleting are refused while a session is open in Claude Code; close it first (or use `/rename` inside it).
+
+Each session is in at most one group. Deleting a group doesn't delete its sessions; they become ungrouped.
+
+Some sessions are hidden unless you turn them on in the View menu: archived sessions, sessions you've only used in the Claude desktop app (it lists those itself; once you resume one here it shows like any other), and empty or scripted (`claude -p`) sessions.
 
 **Settings** (File menu) has the theme, whether sessions open as tabs in an existing terminal window, and on Linux which terminal to use.
 
@@ -65,6 +71,7 @@ You can select several sessions to archive, restore or delete them together. Ren
 | Claude Code's sessions (read, and changed only when you rename, archive or delete) | `%USERPROFILE%\.claude` | `~/.claude` |
 | Archived sessions | `%APPDATA%\ClaudeCodeOrganizer\archive` | `~/.local/share/claude-code-organizer/archive` |
 | Settings | `%APPDATA%\ClaudeCodeOrganizer\settings.json` | `~/.config/claude-code-organizer/settings.json` |
+| Your groups | `%APPDATA%\ClaudeCodeOrganizer\groups.json` | `~/.config/claude-code-organizer/groups.json` |
 
 If you set `CLAUDE_CONFIG_DIR`, the organizer uses that folder instead of `.claude`.
 

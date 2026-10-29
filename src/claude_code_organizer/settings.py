@@ -8,6 +8,7 @@ from dataclasses import asdict, dataclass, fields
 from claude_code_organizer import paths
 
 THEMES = {"system": "Follow system", "light": "Light", "dark": "Dark"}
+GROUP_BY = ("none", "folder", "group")
 
 
 @dataclass
@@ -15,9 +16,10 @@ class Settings:
     theme: str = "system"
     use_tabs: bool = True            # open sessions as tabs of an existing terminal window
     linux_terminal: str = "auto"
-    group_by_folder: bool = False
+    group_by: str = "none"           # one of GROUP_BY
     show_archived: bool = False
     show_hidden: bool = False        # sessions with no prompt, and `claude -p` / SDK runs
+    show_desktop_app: bool = False   # sessions only ever used in the Claude desktop app
     window_geometry: str = ""        # base64 QByteArray
     header_state: str = ""
 
@@ -33,8 +35,12 @@ class Settings:
                 value = saved.get(f.name)
                 if isinstance(value, type(getattr(settings, f.name))):
                     setattr(settings, f.name, value)
+            if "group_by" not in saved and saved.get("group_by_folder") is True:  # 1.0.0 setting
+                settings.group_by = "folder"
         if settings.theme not in THEMES:
             settings.theme = "system"
+        if settings.group_by not in GROUP_BY:
+            settings.group_by = "none"
         return settings
 
     def save(self) -> None:

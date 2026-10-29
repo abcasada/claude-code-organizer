@@ -56,6 +56,18 @@ def test_scripted_sessions_are_flagged(fx):
     assert fx.session(sid).is_scripted
 
 
+def test_desktop_app_sessions_are_flagged_until_used_from_the_cli(fx):
+    desktop = user_line("from the app", CWD, entrypoint="claude-desktop")
+    # The entrypoint comes after the message, which can itself mention an entrypoint.
+    sid, transcript = fx.write_session(CWD, [desktop, user_line('"entrypoint":"cli"', CWD, entrypoint="claude-desktop")])
+    session = fx.session(sid)
+    assert session.is_desktop_app and not session.is_scripted
+    with open(transcript, "a", encoding="utf-8") as f:
+        f.write(user_line("resumed in a terminal", CWD) + "\n")
+    os.utime(transcript, ns=(1, 1))
+    assert not fx.session(sid).is_desktop_app
+
+
 def test_incremental_update_ignores_partial_last_line(fx):
     sid, transcript = fx.write_session(CWD, [user_line("first", CWD)])
     session = fx.session(sid)

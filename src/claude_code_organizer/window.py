@@ -1,4 +1,4 @@
-"""The main window: a searchable, optionally grouped list of sessions and the actions on them."""
+"""The main window: a searchable list of sessions, optionally grouped, and the actions on them."""
 
 from __future__ import annotations
 
@@ -14,20 +14,22 @@ from pathlib import Path
 
 from PySide6.QtCore import QByteArray, QEvent, QFile, QModelIndex, QSortFilterProxyModel, Qt, QTimer, QUrl, Signal
 from PySide6.QtGui import (
-    QAction, QBrush, QColor, QDesktopServices, QFont, QGuiApplication, QKeySequence, QPalette, QStandardItem,
+    QAction, QActionGroup, QBrush, QColor, QDesktopServices, QFont, QGuiApplication, QKeySequence, QPalette, QStandardItem,
     QStandardItemModel,
 )
 from PySide6.QtWidgets import (
     QAbstractItemView, QApplication, QHeaderView, QInputDialog, QLabel, QLineEdit, QMainWindow, QMenu,
-    QMessageBox, QStyle, QStyledItemDelegate, QStyleOptionButton, QStyleOptionViewItem, QToolBar, QTreeView, QWidget,
+    QMessageBox, QStyle, QStyledItemDelegate, QStyleOptionButton, QStyleOptionViewItem, QToolBar, QToolButton,
+    QTreeView, QWidget,
 )
 
 from claude_code_organizer import APP_NAME, REPO_URL, launcher, operations, paths, shortcuts, theme
 from claude_code_organizer.dialogs import SettingsDialog, show_about
+from claude_code_organizer.groups import Groups, clean_name
 from claude_code_organizer.launcher import LaunchError
 from claude_code_organizer.operations import OperationError
 from claude_code_organizer.sessions import LiveSession, Session, SessionStore
-from claude_code_organizer.settings import Settings
+from claude_code_organizer.settings import GROUP_BY, Settings
 
 REFRESH_INTERVAL_MS = 2000
 
@@ -37,12 +39,16 @@ HEADERS = ["Session", "Folder", "Last active", "Status", "ID", ""]
 KEY_ROLE = Qt.UserRole + 1       # session key; None on group rows
 SORT_ROLE = Qt.UserRole + 2
 INFO_ROLE = Qt.UserRole + 3      # RowInfo on session rows
+GROUP_ROLE = Qt.UserRole + 4     # group name on group rows when grouped by group ("" for Ungrouped)
+
+GROUP_BY_LABELS = {"none": "None", "folder": "Folder", "group": "My Groups"}
 
 
 @dataclass(frozen=True)
 class RowInfo:
     archived: bool
     hidden: bool
+    desktop_app: bool
     resumable: bool
     search_text: str
 
@@ -101,34 +107,39 @@ class FolderChecker:
 
 
 class SessionModel(QStandardItemModel):
-    """Session rows, either flat or under one group row per folder. Updated in place on refresh
-    so selection, scrolling and expanded groups survive."""
+    """Session rows, either flat or under one group row per folder or per group. Updated in place on
+    refresh so selection, scrolling and expanded groups survive."""
 
     def __init__(self, parent=None) -> None:
         super().__init__(0, len(HEADERS), parent)
         self.setHorizontalHeaderLabels(HEADERS)
-        self.grouped = False
+        self.group_by = "none"
         self.scheme = "light"
         self.folders = FolderChecker()
         self.rows: dict[str, list[QStandardItem]] = {}
         self._groups: dict[str, list[QStandardItem]] = {}
 
-    def set_grouped(self, grouped: bool) -> None:
-        if grouped == self.grouped:
+    @property
+    def grouped(self) -> bool:
+        return self.group_by != "none"
+
+    def set_group_by(self, group_by: str) -> None:
+        if group_by == self.group_by:
             return
-        self.grouped = grouped
+        self.group_by = group_by
         self.removeRows(0, self.rowCount())
         self.rows.clear()
         self._groups.clear()
 
-    def sync(self, store: SessionStore) -> list[QStandardItem]:
+    def sync(self, store: SessionStore, groups: Groups) -> list[QStandardItem]:
         """Brings the rows up to date with the store. Returns any group rows that were just added."""
         now = time.time()
         seen = set()
         new_groups: list[QStandardItem] = []
         for session in store.sessions.values():
             seen.add(session.key)
-            parent = self._group_for(session, new_groups) if self.grouped else self.invisibleRootItem()
+            group_name = groups.group_of(session.session_id)
+            parent = self._group_for(session, group_name, new_groups) if self.grouped else self.invisibleRootItem()
             row = self.rows.get(session.key)
             if row is None:
                 row = [QStandardItem() for _ in HEADERS]
@@ -141,7 +152,7 @@ class SessionModel(QStandardItemModel):
                 row = old_parent.takeRow(row[0].row())
                 parent.appendRow(row)
                 self.rows[session.key] = row
-            self._fill(row, session, store.live_session(session), now)
+            self._fill(row, session, store.live_session(session), group_name, now)
 
         for key in [k for k in self.rows if k not in seen]:
             row = self.rows.pop(key)
@@ -150,18 +161,26 @@ class SessionModel(QStandardItemModel):
             self._update_groups(now)
         return new_groups
 
-    def _group_for(self, session: Session, new_groups: list[QStandardItem]) -> QStandardItem:
-        key = paths.folder_key(session.cwd) if session.cwd else ""
+    def _group_for(self, session: Session, group_name: str | None, new_groups: list[QStandardItem]) -> QStandardItem:
+        if self.group_by == "folder":
+            key = paths.folder_key(session.cwd) if session.cwd else ""
+        else:
+            key = group_name or ""
         group = self._groups.get(key)
         if group is None:
             group = [QStandardItem() for _ in HEADERS]
             for item in group:
                 item.setEditable(False)
-            group[COL_TITLE].setText(session.cwd or "(unknown folder)")
-            group[COL_TITLE].setToolTip(session.cwd or "")
-            group[COL_TITLE].setIcon(QApplication.style().standardIcon(QStyle.SP_DirIcon))
             font = QFont()
             font.setBold(True)
+            if self.group_by == "folder":
+                group[COL_TITLE].setText(session.cwd or "(unknown folder)")
+                group[COL_TITLE].setToolTip(session.cwd or "")
+                group[COL_TITLE].setIcon(QApplication.style().standardIcon(QStyle.SP_DirIcon))
+            else:
+                group[COL_TITLE].setText(group_name or "Ungrouped")
+                group[COL_TITLE].setData(group_name or "", GROUP_ROLE)
+                font.setItalic(not group_name)
             group[COL_TITLE].setFont(font)
             self.invisibleRootItem().appendRow(group)
             self._groups[key] = group
@@ -181,7 +200,8 @@ class SessionModel(QStandardItemModel):
             group[COL_ACTIVE].setData(latest, SORT_ROLE)
             group[COL_FOLDER].setData(head.text().lower(), SORT_ROLE)
 
-    def _fill(self, row: list[QStandardItem], session: Session, live: LiveSession | None, now: float) -> None:
+    def _fill(self, row: list[QStandardItem], session: Session, live: LiveSession | None, group_name: str | None,
+              now: float) -> None:
         # Unknown until the background check answers; assume it's there.
         folder_ok = bool(session.cwd) and self.folders.exists(session.cwd) is not False
         if session.archived:
@@ -200,8 +220,9 @@ class SessionModel(QStandardItemModel):
         info = RowInfo(
             archived=session.archived,
             hidden=not session.has_content or session.is_scripted,
+            desktop_app=session.is_desktop_app,
             resumable=folder_ok,
-            search_text=f"{title} {session.cwd or ''} {session.session_id}".lower(),
+            search_text=f"{title} {session.cwd or ''} {session.session_id} {group_name or ''}".lower(),
         )
         values = {
             COL_TITLE: (title, title.lower()),
@@ -245,8 +266,10 @@ class SessionFilter(QSortFilterProxyModel):
         self.words: list[str] = []
         self.show_archived = False
         self.show_hidden = False
+        self.show_desktop_app = False
 
-    def update(self, text: str | None = None, show_archived: bool | None = None, show_hidden: bool | None = None) -> None:
+    def update(self, text: str | None = None, show_archived: bool | None = None, show_hidden: bool | None = None,
+               show_desktop_app: bool | None = None) -> None:
         # Qt 6.10 replaced invalidateFilter() with begin/endFilterChange(); support both.
         modern = hasattr(self, "beginFilterChange") and hasattr(self, "endFilterChange")
         if modern:
@@ -257,6 +280,8 @@ class SessionFilter(QSortFilterProxyModel):
             self.show_archived = show_archived
         if show_hidden is not None:
             self.show_hidden = show_hidden
+        if show_desktop_app is not None:
+            self.show_desktop_app = show_desktop_app
         if modern:
             self.endFilterChange()
         else:
@@ -269,6 +294,8 @@ class SessionFilter(QSortFilterProxyModel):
         if info.archived and not self.show_archived:
             return False
         if info.hidden and not self.show_hidden:
+            return False
+        if info.desktop_app and not self.show_desktop_app:
             return False
         return all(word in info.search_text for word in self.words)
 
@@ -360,10 +387,11 @@ class SessionView(QTreeView):
 
 
 class MainWindow(QMainWindow):
-    def __init__(self, settings: Settings, store: SessionStore | None = None) -> None:
+    def __init__(self, settings: Settings, store: SessionStore | None = None, groups: Groups | None = None) -> None:
         super().__init__()
         self.settings = settings
         self.store = store or SessionStore()
+        self.groups = groups or Groups()
         self.setWindowTitle(APP_NAME)
         self.resize(1150, 640)
 
@@ -436,9 +464,18 @@ class MainWindow(QMainWindow):
         if self.act_quit.shortcut().isEmpty():
             self.act_quit.setShortcut(QKeySequence("Ctrl+Q"))
 
-        self.act_group = self._action("&Group by Folder", self._toggle_group, "Ctrl+G", checkable=True)
+        self.group_by_actions = QActionGroup(self)
+        for mode in GROUP_BY:
+            action = QAction("&" + GROUP_BY_LABELS[mode], self.group_by_actions)
+            action.setCheckable(True)
+            action.setData(mode)
+        self.group_by_actions.triggered.connect(lambda action: self._set_group_by(action.data()))
+        self.act_cycle_group_by = self._action("Change Grouping", self._cycle_group_by, "Ctrl+G")
+        self.addAction(self.act_cycle_group_by)
         self.act_show_archived = self._action("Show &Archived Sessions", self._toggle_archived, checkable=True)
         self.act_show_hidden = self._action("Show &Empty and Scripted Sessions", self._toggle_hidden, checkable=True)
+        self.act_show_desktop_app = self._action("Show &Desktop App Sessions", self._toggle_desktop_app, checkable=True)
+        self.act_show_desktop_app.setToolTip("Sessions only ever used in the Claude desktop app, which lists its own")
         self.act_refresh = self._action("&Refresh", self.refresh, QKeySequence.Refresh)
         if self.act_refresh.shortcut().isEmpty():
             self.act_refresh.setShortcut(QKeySequence("F5"))
@@ -455,6 +492,10 @@ class MainWindow(QMainWindow):
         self.act_copy_command = self._action("Copy Resume &Command", self._copy_command)
         self.act_copy_id = self._action("Copy Session &ID", self._copy_id)
         self.act_open_folder = self._action("Open &Folder", lambda: self._open_folder(self._single().cwd))
+        self.group_menu = QMenu("Move to &Group", self)
+        self.group_menu.aboutToShow.connect(self._fill_group_menu)
+        self.act_new_group = self._action("&New Group...", self._new_group)
+        self.act_ungroup = self._action("&Remove from Group", lambda: self._move_to_group(None))
 
         self.act_about = self._action(f"&About {APP_NAME}", lambda: show_about(self))
         self.act_github = self._action("Project on &GitHub", lambda: QDesktopServices.openUrl(QUrl(REPO_URL)))
@@ -466,7 +507,10 @@ class MainWindow(QMainWindow):
         menu.addAction(self.act_quit)
 
         menu = self.menuBar().addMenu("&View")
-        menu.addActions([self.act_group, self.act_show_archived, self.act_show_hidden])
+        self.group_by_menu = menu.addMenu("&Group By")
+        self.group_by_menu.addActions(self.group_by_actions.actions())
+        menu.addActions([self.act_show_archived, self.act_show_desktop_app, self.act_show_hidden])
+        menu.setToolTipsVisible(True)
         menu.addSeparator()
         menu.addAction(self.act_refresh)
 
@@ -477,9 +521,26 @@ class MainWindow(QMainWindow):
         menu.addActions([self.act_github, self.act_about])
 
     def _fill_session_menu(self, menu: QMenu) -> None:
-        menu.addActions([self.act_resume, self.act_rename, self.act_archive, self.act_delete])
+        menu.addActions([self.act_resume, self.act_rename])
+        menu.addMenu(self.group_menu)
+        menu.addActions([self.act_archive, self.act_delete])
         menu.addSeparator()
         menu.addActions([self.act_copy_command, self.act_copy_id, self.act_open_folder])
+
+    def _fill_group_menu(self) -> None:
+        menu = self.group_menu
+        menu.clear()
+        selected = self._selected()
+        current = {self.groups.group_of(s.session_id) for s in selected}
+        for name in self.groups.names(s.session_id for s in self.store.sessions.values()):
+            action = menu.addAction(name.replace("&", "&&"))
+            action.setCheckable(True)
+            action.setChecked(current == {name})
+            action.triggered.connect(lambda _checked=False, name=name: self._move_to_group(name))
+        if not menu.isEmpty():
+            menu.addSeparator()
+        menu.addAction(self.act_new_group)
+        menu.addAction(self.act_ungroup)
 
     def _build_toolbar(self) -> None:
         self.toolbar = QToolBar("Main")
@@ -496,7 +557,11 @@ class MainWindow(QMainWindow):
         spacer = QWidget()
         spacer.setFixedWidth(12)
         self.toolbar.addWidget(spacer)
-        self.toolbar.addAction(self.act_group)
+        self.group_by_button = QToolButton()
+        self.group_by_button.setMenu(self.group_by_menu)
+        self.group_by_button.setPopupMode(QToolButton.InstantPopup)
+        self.group_by_button.setToolTip("Group the list by folder, by your own groups, or not at all (Ctrl+G)")
+        self.toolbar.addWidget(self.group_by_button)
         self.toolbar.addAction(self.act_show_archived)
         self.addToolBar(self.toolbar)
 
@@ -505,15 +570,20 @@ class MainWindow(QMainWindow):
             self.restoreGeometry(QByteArray.fromBase64(self.settings.window_geometry.encode()))
         if self.settings.header_state:
             self.view.header().restoreState(QByteArray.fromBase64(self.settings.header_state.encode()))
-        self.act_group.setChecked(self.settings.group_by_folder)
         self.act_show_archived.setChecked(self.settings.show_archived)
         self.act_show_hidden.setChecked(self.settings.show_hidden)
+        self.act_show_desktop_app.setChecked(self.settings.show_desktop_app)
 
     def _apply_view_settings(self) -> None:
-        self.model.set_grouped(self.settings.group_by_folder)
-        self.view.setRootIsDecorated(self.settings.group_by_folder)
-        self.view.setColumnHidden(COL_FOLDER, self.settings.group_by_folder)
-        self.proxy.update(show_archived=self.settings.show_archived, show_hidden=self.settings.show_hidden)
+        group_by = self.settings.group_by
+        for action in self.group_by_actions.actions():
+            action.setChecked(action.data() == group_by)
+        self.group_by_button.setText(f"Group by: {GROUP_BY_LABELS[group_by]}")
+        self.model.set_group_by(group_by)
+        self.view.setRootIsDecorated(group_by != "none")
+        self.view.setColumnHidden(COL_FOLDER, group_by == "folder")
+        self.proxy.update(show_archived=self.settings.show_archived, show_hidden=self.settings.show_hidden,
+                          show_desktop_app=self.settings.show_desktop_app)
 
     # --- lifecycle ---------------------------------------------------------------------------------
 
@@ -534,7 +604,8 @@ class MainWindow(QMainWindow):
         except OSError as e:
             self.status_label.setText(f"Couldn't read sessions: {e}")
             return
-        for group in self.model.sync(self.store):
+        self.groups.reload()
+        for group in self.model.sync(self.store, self.groups):
             self.view.expand(self.proxy.mapFromSource(group.index()))
         self._reselect(selected)
         self._update_status()
@@ -616,6 +687,8 @@ class MainWindow(QMainWindow):
         self.act_archive.setText("&Restore" if selected and all(s.archived for s in selected) else "&Archive")
         for action in (self.act_copy_command, self.act_copy_id, self.act_open_folder):
             action.setEnabled(single)
+        self.group_menu.menuAction().setEnabled(bool(selected))
+        self.act_ungroup.setEnabled(any(self.groups.group_of(s.session_id) for s in selected))
 
     def _on_double_click(self, index: QModelIndex) -> None:
         if index.column() == COL_RESUME:
@@ -624,9 +697,22 @@ class MainWindow(QMainWindow):
         if session:
             self._resume([session])
 
+    def _group_at(self, proxy_index: QModelIndex) -> str | None:
+        """The group's name if this is a group's row (grouped by group, not Ungrouped)."""
+        return self.proxy.mapToSource(proxy_index.siblingAtColumn(COL_TITLE)).data(GROUP_ROLE) or None
+
     def _show_context_menu(self, pos) -> None:
         index = self.view.indexAt(pos)
-        if not index.isValid() or not self._session_at(index):
+        if not index.isValid():
+            return
+        group = self._group_at(index)
+        if group:
+            menu = QMenu(self)
+            menu.addAction("Re&name Group...", lambda: self._rename_group(group))
+            menu.addAction("&Delete Group...", lambda: self._delete_group(group))
+            menu.exec(self.view.viewport().mapToGlobal(pos))
+            return
+        if not self._session_at(index):
             return
         if not self.view.selectionModel().isRowSelected(index.row(), index.parent()):
             self.view.clear_selection()
@@ -749,8 +835,63 @@ class MainWindow(QMainWindow):
                     except OperationError as e2:
                         errors.append(f"“{session.title}”: {e2}")
         self.refresh()
+        gone = {s.session_id for s in selected} - {s.session_id for s in self.store.sessions.values()}
+        if gone:
+            try:
+                self.groups.assign(gone, None)
+            except OSError:
+                pass  # a leftover entry for a deleted session is harmless
         if errors:
             self._error("\n\n".join(errors))
+
+    def _move_to_group(self, name: str | None) -> None:
+        selected = self._selected()
+        if not selected:
+            return
+        try:
+            self.groups.assign({s.session_id for s in selected}, name)
+        except OSError as e:
+            self._error(f"Couldn't save the groups:\n\n{e}")
+            return
+        self.refresh()
+        if name and self.settings.group_by != "group":
+            self.statusBar().showMessage(f"Moved to “{name}”. View → Group By → My Groups shows them.", 6000)
+
+    def _new_group(self) -> None:
+        if not self._selected():
+            return
+        name, ok = QInputDialog.getText(self, "New Group", "Group name:")
+        name = clean_name(name)
+        if ok and name:
+            self._move_to_group(name)
+
+    def _rename_group(self, old: str) -> None:
+        new, ok = QInputDialog.getText(self, "Rename Group", "New name:", QLineEdit.Normal, old)
+        new = clean_name(new)
+        if not ok or not new or new == old:
+            return
+        if new in self.groups.names():
+            answer = QMessageBox.question(self, APP_NAME, f"There's already a group named “{new}”. Merge the two?",
+                                          QMessageBox.Yes | QMessageBox.No, QMessageBox.No)
+            if answer != QMessageBox.Yes:
+                return
+        try:
+            self.groups.rename(old, new)
+        except OSError as e:
+            self._error(f"Couldn't save the groups:\n\n{e}")
+        self.refresh()
+
+    def _delete_group(self, name: str) -> None:
+        answer = QMessageBox.question(self, APP_NAME, f"Delete the group “{name}”?\n\n"
+                                      "Its sessions aren't deleted; they move to Ungrouped.",
+                                      QMessageBox.Yes | QMessageBox.No, QMessageBox.No)
+        if answer != QMessageBox.Yes:
+            return
+        try:
+            self.groups.remove(name)
+        except OSError as e:
+            self._error(f"Couldn't save the groups:\n\n{e}")
+        self.refresh()
 
     def _copy_command(self) -> None:
         session = self._single()
@@ -788,10 +929,14 @@ class MainWindow(QMainWindow):
 
     # --- view options ------------------------------------------------------------------------------
 
-    def _toggle_group(self, checked: bool) -> None:
-        self.settings.group_by_folder = checked
+    def _set_group_by(self, group_by: str) -> None:
+        self.settings.group_by = group_by
         self._apply_view_settings()
         self.refresh()
+
+    def _cycle_group_by(self) -> None:
+        self._set_group_by(GROUP_BY[(GROUP_BY.index(self.settings.group_by) + 1) % len(GROUP_BY)])
+        self.statusBar().showMessage(f"Group by: {GROUP_BY_LABELS[self.settings.group_by]}", 3000)
 
     def _toggle_archived(self, checked: bool) -> None:
         self.settings.show_archived = checked
@@ -801,6 +946,11 @@ class MainWindow(QMainWindow):
     def _toggle_hidden(self, checked: bool) -> None:
         self.settings.show_hidden = checked
         self.proxy.update(show_hidden=checked)
+        self._update_status()
+
+    def _toggle_desktop_app(self, checked: bool) -> None:
+        self.settings.show_desktop_app = checked
+        self.proxy.update(show_desktop_app=checked)
         self._update_status()
 
     def _open_settings(self) -> None:
