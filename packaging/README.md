@@ -47,13 +47,13 @@ docker run --rm -v "$PWD:/src" -w /src ubuntu:26.04 \
 2. Tag and push:
 
    ```sh
-   git tag v0.2.0
-   git push origin v0.2.0
+   git tag vX.Y.Z
+   git push origin vX.Y.Z
    ```
 
 3. The release workflow builds and smoke-tests both artifacts, then creates the
-   GitHub release `v0.2.0` with generated notes and the `.exe` and `.deb`
+   GitHub release `vX.Y.Z` with generated notes and the `.exe` and `.deb`
    attached. Edit the notes on GitHub afterwards if needed.
 
 If a release run fails, fix the problem, delete the tag
-(`git push --delete origin v0.2.0 && git tag -d v0.2.0`) and tag again.
+(`git push --delete origin vX.Y.Z && git tag -d vX.Y.Z`) and tag again.
