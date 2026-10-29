@@ -2,7 +2,8 @@
 """Build dist/claude-code-organizer_<version>_all.deb.
 
 Runs on Debian/Ubuntu (needs dpkg-deb). The package uses the distribution's
-PySide6 rather than bundling Qt.
+PySide6 rather than bundling Qt, and installs two commands: claude-code-organizer
+(the window) and ccorg (the command line).
 """
 
 import re
@@ -18,6 +19,8 @@ DIST = ROOT / "dist"
 NAME = "claude-code-organizer"
 APP_ID = "io.github.abcasada.ClaudeCodeOrganizer"
 
+# The window's Qt packages are only Recommends: apt installs them by default, and a server
+# can leave them out with --no-install-recommends and use the command line (ccorg) alone.
 # qt6-svg-plugins lets Qt render the SVG window icon.
 CONTROL = """\
 Package: {name}
@@ -25,22 +28,23 @@ Version: {version}
 Architecture: all
 Maintainer: Adam Casada <40399292+abcasada@users.noreply.github.com>
 Installed-Size: {installed_size}
-Depends: python3 (>= 3.10), python3-pyside6.qtcore, python3-pyside6.qtgui, python3-pyside6.qtwidgets, python3-pyside6.qtnetwork, libxcb-cursor0
-Recommends: konsole | gnome-terminal | x-terminal-emulator, qt6-svg-plugins
+Depends: python3 (>= 3.10)
+Recommends: python3-pyside6.qtcore, python3-pyside6.qtgui, python3-pyside6.qtwidgets, python3-pyside6.qtnetwork, libxcb-cursor0, qt6-svg-plugins, konsole | gnome-terminal | x-terminal-emulator
 Section: devel
 Priority: optional
 Homepage: https://github.com/abcasada/claude-code-organizer
-Description: desktop organizer for Claude Code sessions
+Description: organizer for Claude Code sessions, as a window or on the command line
  Claude Code Organizer lists your Claude Code sessions across projects and
- lets you resume, rename, archive and delete them from a small Qt window.
+ lets you resume, rename, group, archive and delete them, from a small Qt
+ window or with the ccorg command (which also works without a desktop).
 """
 
 # -I keeps the user's site-packages / PYTHONPATH (e.g. a pip-installed PySide6)
 # and the current directory from shadowing the distribution's modules.
-WRAPPER = """\
-#!/bin/sh
-exec /usr/bin/python3 -I -m claude_code_organizer "$@"
-"""
+WRAPPERS = {
+    NAME: 'exec /usr/bin/python3 -I -m claude_code_organizer "$@"\n',
+    "ccorg": 'exec /usr/bin/python3 -I -m claude_code_organizer.cli "$@"\n',
+}
 
 # On Wayland Qt uses desktopFileName (== APP_ID) as the app_id. On X11 its
 # WM_CLASS class is QCoreApplication.applicationName(), i.e. APP_NAME.
@@ -108,14 +112,16 @@ def build(stage: Path, version: str) -> Path:
     shutil.copyfile(PKG_SRC / "resources" / "icon.svg", icon)
     write(stage / f"usr/share/applications/{APP_ID}.desktop", DESKTOP)
     write(stage / f"usr/share/doc/{NAME}/copyright", copyright_text())
-    write(stage / f"usr/bin/{NAME}", WRAPPER)
+    for command, body in WRAPPERS.items():
+        write(stage / f"usr/bin/{command}", "#!/bin/sh\n" + body)
     write(
         stage / "DEBIAN/control",
         CONTROL.format(name=NAME, version=version, installed_size=installed_size_kib(stage)),
     )
 
     normalize_modes(stage)
-    (stage / f"usr/bin/{NAME}").chmod(0o755)
+    for command in WRAPPERS:
+        (stage / f"usr/bin/{command}").chmod(0o755)
 
     DIST.mkdir(exist_ok=True)
     deb = DIST / f"{NAME}_{version}_all.deb"

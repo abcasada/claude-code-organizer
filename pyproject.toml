@@ -20,7 +20,10 @@ dev = ["pytest>=8"]
 Homepage = "https://github.com/abcasada/claude-code-organizer"
 
 [project.gui-scripts]
-claude-code-organizer = "claude_code_organizer.app:main"
+claude-code-organizer = "claude_code_organizer.cli:entry"
+
+[project.scripts]
+ccorg = "claude_code_organizer.cli:main"
 
 [tool.setuptools.packages.find]
 where = ["src"]

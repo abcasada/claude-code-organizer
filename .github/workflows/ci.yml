@@ -56,11 +56,19 @@ jobs:
       - run: python3 packaging/linux/build_deb.py
       - run: dpkg-deb --info dist/*.deb && dpkg-deb --contents dist/*.deb
 
-      # --no-install-recommends proves Depends alone are enough to run.
-      - name: Install the package
+      # Without Recommends there's no Qt: the server install, command line only.
+      - name: Install the package without Qt
         run: apt-get install -y --no-install-recommends ./dist/*.deb
 
-      - name: Smoke test
+      - name: Command line check
+        run: sh packaging/linux/check_cli.sh
+
+      - name: Install Qt
+        run: >
+          apt-get install -y --no-install-recommends
+          python3-pyside6.qtwidgets python3-pyside6.qtnetwork libxcb-cursor0
+
+      - name: Smoke test the window
         run: QT_QPA_PLATFORM=offscreen claude-code-organizer --smoke-test
 
       - uses: actions/upload-artifact@v7

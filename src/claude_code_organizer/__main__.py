@@ -1,5 +1,5 @@
 import sys
 
-from claude_code_organizer.app import main
+from claude_code_organizer.cli import entry
 
-sys.exit(main())
+sys.exit(entry())

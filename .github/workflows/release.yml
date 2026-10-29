@@ -63,9 +63,11 @@ jobs:
           apt-get update
           apt-get install -y --no-install-recommends python3
       - run: python3 packaging/linux/build_deb.py
-      - name: Install and smoke test
+      - name: Install and test the command line without Qt, then the window with it
         run: |
           apt-get install -y --no-install-recommends ./dist/*.deb
+          sh packaging/linux/check_cli.sh
+          apt-get install -y --no-install-recommends python3-pyside6.qtwidgets python3-pyside6.qtnetwork libxcb-cursor0
           QT_QPA_PLATFORM=offscreen claude-code-organizer --smoke-test
       - uses: actions/upload-artifact@v7
         with:

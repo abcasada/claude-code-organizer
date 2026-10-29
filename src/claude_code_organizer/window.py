@@ -25,6 +25,7 @@ from PySide6.QtWidgets import (
 
 from claude_code_organizer import APP_NAME, REPO_URL, launcher, operations, paths, shortcuts, theme
 from claude_code_organizer.dialogs import SettingsDialog, show_about
+from claude_code_organizer.display import relative_time, status_text
 from claude_code_organizer.groups import Groups, clean_name
 from claude_code_organizer.launcher import LaunchError
 from claude_code_organizer.operations import OperationError
@@ -51,20 +52,6 @@ class RowInfo:
     desktop_app: bool
     resumable: bool
     search_text: str
-
-
-def relative_time(timestamp: float, now: float) -> str:
-    age = now - timestamp
-    if age < 60:
-        return "just now"
-    if age < 3600:
-        return f"{int(age // 60)} min ago"
-    if age < 86400:
-        return f"{int(age // 3600)} h ago"
-    when = time.localtime(timestamp)
-    if age < 7 * 86400:
-        return time.strftime("%a %H:%M", when)
-    return time.strftime("%Y-%m-%d", when)
 
 
 def trash_label() -> str:
@@ -204,17 +191,11 @@ class SessionModel(QStandardItemModel):
               now: float) -> None:
         # Unknown until the background check answers; assume it's there.
         folder_ok = bool(session.cwd) and self.folders.exists(session.cwd) is not False
-        if session.archived:
-            status, color = "Archived", None
-        elif live:
-            status = live.label
+        status, color = status_text(session, live, folder_ok), None
+        if live and not session.archived:
             kind = "background" if live.kind == "bg" else {"busy": "working", "shell": "working",
                                                              "waiting": "waiting"}.get(live.status, "idle")
             color = theme.STATUS_COLORS[self.scheme][kind]
-        elif not folder_ok:
-            status, color = "Folder missing", None
-        else:
-            status, color = "", None
 
         title = session.title
         info = RowInfo(

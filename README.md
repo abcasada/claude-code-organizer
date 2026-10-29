@@ -1,6 +1,6 @@
 # Claude Code Organizer
 
-A small desktop app for Windows and Linux that lists every [Claude Code](https://claude.com/claude-code) session on your computer, so you can reopen, rename, archive or delete one with a click.
+A small desktop app for Windows and Linux that lists every [Claude Code](https://claude.com/claude-code) session on your computer, so you can reopen, rename, group, archive or delete one with a click. It also has a [command line](#command-line) for servers without a desktop.
 
 **Resume** opens the session in a new terminal tab, in the folder it was started in, running `claude --resume <session-id>`. On Windows that's a tab in Windows Terminal; on Linux, Konsole, GNOME Terminal or Ptyxis, or another terminal if those aren't installed.
 
@@ -30,7 +30,13 @@ sudo apt install ./claude-code-organizer_*_all.deb
 
 It uses your distribution's Qt for Python packages (Ubuntu 26.04 or newer). Open **Claude Code Organizer** from your app menu.
 
-> **Developer note:** the basic functions have been tested by hand on Windows, but not yet on Linux. On Linux, the automated checks only install the `.deb` on Ubuntu 26.04 and start the app without a display. If something doesn't work, please [open an issue](https://github.com/abcasada/claude-code-organizer/issues).
+On a server without a desktop, leave Qt out and use the [command line](#command-line):
+
+```bash
+sudo apt install --no-install-recommends ./claude-code-organizer_*_all.deb
+```
+
+> **Developer note:** the basic functions have been tested by hand on Windows, but not yet on Linux. On Linux, the automated checks install the `.deb` on Ubuntu 26.04, run every `ccorg` command against a sample session, and start the window without a display. If something doesn't work, please [open an issue](https://github.com/abcasada/claude-code-organizer/issues).
 
 ### From source (any platform with Python 3.10+)
 
@@ -63,6 +69,37 @@ Each session is in at most one group. Deleting a group doesn't delete its sessio
 Some sessions are hidden unless you turn them on in the View menu: archived sessions, sessions you've only used in the Claude desktop app (it lists those itself; once you resume one here it shows like any other), and empty or scripted (`claude -p`) sessions.
 
 **Settings** (File menu) has the theme, whether sessions open as tabs in an existing terminal window, and on Linux which terminal to use.
+
+## Command line
+
+`ccorg` does the same things in a terminal, for example over SSH on a server with no desktop. It's installed with the `.deb`, and with `pip install` (where it also works on Windows).
+
+```console
+$ ccorg
+#  ID        LAST ACTIVE  STATUS       TITLE                       FOLDER
+1  0a1872ef  2 min ago    Needs input  Fix the login redirect      ~/src/webapp
+2  4dbe6481  1 h ago                   Nightly backup script       ~/ops
+3  39e8a3f5  Mon 18:31                 Upgrade Postgres to 18      ~/ops/db
+Resume which? (number, ID or title; Enter to quit) 2
+```
+
+Picking one runs `claude --resume` right there, in the session's folder. When `claude` exits you're back in your shell.
+
+| Command | Does |
+| --- | --- |
+| `ccorg` | Lists recent sessions and asks which one to resume |
+| `ccorg list [WORDS] [-g GROUP] [--archived] [-a] [--json]` | Lists sessions, optionally only those matching words or in a group |
+| `ccorg resume SESSION` | Resumes a session in this terminal |
+| `ccorg show SESSION` | Shows a session's details |
+| `ccorg rename SESSION NAME` | Renames it, like `/rename` |
+| `ccorg group GROUP SESSION...` / `ccorg ungroup SESSION...` | Puts sessions in a group, or takes them out |
+| `ccorg groups`, `rename-group`, `delete-group` | Lists, renames or deletes groups |
+| `ccorg archive SESSION...` / `ccorg restore SESSION...` | Archives or restores sessions |
+| `ccorg delete SESSION... [--permanent]` | Moves sessions to the trash (`~/.local/share/Trash`), or deletes them for good |
+
+SESSION can be a number from the last list, the start of the session ID, or words from the title. `ccorg COMMAND -h` shows each command's options. On Windows, `delete` needs `--permanent`; use the window to send sessions to the Recycle Bin instead.
+
+`claude-code-organizer` opens the window, but given a command (`claude-code-organizer list`), or run where there's no display, it's the command line too.
 
 ## Where things are stored
 
