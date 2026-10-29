@@ -321,17 +321,17 @@ class Cli:
 
     def cmd_delete(self, args) -> int:
         sessions = self.resolve_all(args.sessions)
-        where = "permanently" if args.permanent else "to the trash"
         names = "\n".join(f"  {s.title}  ({short_path(s.cwd)})" for s in sessions)
         if not args.yes:
-            self.note(f"Delete {where}:\n{names}")
+            self.note(f"{'Delete permanently' if args.permanent else 'Move to the trash'}:\n{names}")
             if not self.confirm("Go ahead?", "--yes"):
                 return 1
         failed = 0
         for session in sessions:
             try:
                 operations.delete(self.store, session, trash=trash, permanent=args.permanent)
-                self.note(f"Deleted “{session.title}” {where}.")
+                self.note(f"Deleted “{session.title}”." if args.permanent
+                          else f"Moved “{session.title}” to the trash.")
             except OperationError as e:
                 hint = " Use --permanent to delete it for good." if "trash" in str(e).lower() else ""
                 self.note(f"“{session.title}”: {e}{hint}")
