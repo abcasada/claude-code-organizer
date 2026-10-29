@@ -30,6 +30,8 @@ sudo apt install ./claude-code-organizer_*_all.deb
 
 It uses your distribution's Qt for Python packages (Ubuntu 26.04 or newer). Open **Claude Code Organizer** from your app menu.
 
+> **Developer note:** the basic functions have been tested by hand on Windows, but not yet on Linux. On Linux, the automated checks only install the `.deb` on Ubuntu 26.04 and start the app without a display. If something doesn't work, please [open an issue](https://github.com/abcasada/claude-code-organizer/issues).
+
 ### From source (any platform with Python 3.10+)
 
 ```bash
